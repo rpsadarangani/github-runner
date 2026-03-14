@@ -1,5 +1,6 @@
 # Stage 1: Get the actions-runner binaries
-FROM ghcr.io/actions/actions-runner:2.332.0 AS runner-base
+ARG RUNNER_VERSION=2.332.0
+FROM ghcr.io/actions/actions-runner:${RUNNER_VERSION} AS runner-base
 
 # Stage 2: Get docker CLI + buildx
 FROM docker:27.3.1-cli AS docker-base

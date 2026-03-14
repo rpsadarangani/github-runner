@@ -1,22 +1,56 @@
 name: Build GitHub Runner Image
 
 on:
+  schedule:
+    - cron: '0 */6 * * *'
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       runner_version:
-        description: 'GitHub Actions Runner version (e.g. 2.332.0)'
-        required: true
-        default: '2.332.0'
+        description: 'Override runner version (e.g. 2.332.0). Leave empty for latest.'
+        required: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/github-runners
-  RUNNER_VERSION: ${{ github.event.inputs.runner_version || '2.332.0' }}
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - name: Get latest runner version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.runner_version }}" ]; then
+            VERSION="${{ github.event.inputs.runner_version }}"
+          else
+            VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Runner version: ${VERSION}"
+
+      - name: Check if image already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAGS=$(gh api user/packages/container/github-runners/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
+          if echo "$TAGS" | grep -q "^v${VERSION}$"; then
+            echo "v${VERSION} already exists in GHCR"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v${VERSION} not found in GHCR, will build"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,14 +72,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push runner image
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=v${{ needs.resolve.outputs.version }}
+            type=raw,value=v${{ needs.resolve.outputs.version }}-{{date 'YYYYMMDD'}}
+            type=raw,value=latest
+
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ env.RUNNER_VERSION }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          build-args: |
+            RUNNER_VERSION=${{ needs.resolve.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
