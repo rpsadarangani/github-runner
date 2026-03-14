@@ -1,8 +1,8 @@
 # Stage 1: Get the actions-runner binaries
 FROM ghcr.io/actions/actions-runner:2.332.0 AS runner-base
 
-# Stage 2: Get docker CLI + buildx from docker:dind
-FROM docker:27.3.1-dind AS docker-base
+# Stage 2: Get docker CLI + buildx
+FROM docker:27.3.1-cli AS docker-base
 
 # Stage 3: Build the final runner image
 FROM ubuntu:22.04
@@ -60,7 +60,7 @@ WORKDIR /home/runner
 COPY --from=runner-base --chown=runner:docker /home/runner /home/runner
 
 # Copy docker buildx plugin
-COPY --from=docker-base /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx
+COPY --from=docker-base /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx
 
 # Copy docker CLI binaries
 COPY --from=docker-base /usr/local/bin/docker /usr/bin/docker
