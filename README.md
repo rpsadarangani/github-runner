@@ -1,13 +1,13 @@
 # GitHub Actions Self-Hosted Runner
 
-Multi-arch Docker image for self-hosted GitHub Actions runners with DinD (Docker-in-Docker) support.
+Multi-arch Docker image for self-hosted GitHub Actions runners with DinD (Docker-in-Docker) support. Automatically rebuilds when GitHub releases a new runner version.
 
 ## What's included
 
 | Tool | Source |
 |------|--------|
-| GitHub Actions Runner | [actions/runner](https://github.com/actions/runner) v2.332.0 |
-| Docker CLI + Buildx | [docker:27.3.1-dind](https://hub.docker.com/_/docker) |
+| GitHub Actions Runner | [actions/runner](https://github.com/actions/runner) (auto-updated) |
+| Docker CLI + Buildx | [docker:27.3.1-cli](https://hub.docker.com/_/docker) |
 | Helm | Latest via get-helm-3 |
 | kubectl | Latest stable |
 | DevSpace | Latest |
@@ -30,10 +30,12 @@ docker pull ghcr.io/rpsadarangani/github-runners:v2.332.0
 
 ```bash
 # Single arch
-docker build -t github-runners:v2.332.0 .
+docker build --build-arg RUNNER_VERSION=2.332.0 -t github-runners:v2.332.0 .
 
 # Multi-arch
-docker buildx build --platform linux/amd64,linux/arm64 -t github-runners:v2.332.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg RUNNER_VERSION=2.332.0 \
+  -t github-runners:v2.332.0 --push .
 ```
 
 ### Use with actions-runner-controller
@@ -90,14 +92,51 @@ template:
         emptyDir: {}
 ```
 
-## CI
+## CI / Automation
 
-The GitHub Actions workflow builds and pushes the image to GHCR on every push to `main`. You can also trigger it manually with a custom runner version via **Actions > Run workflow**.
+### How it works
 
-## Updating runner version
+A GitHub Actions workflow runs **every 6 hours** to check for new runner releases:
 
-1. Update `RUNNER_VERSION` default in `.github/workflows/build-runner.yml`
-2. Update the `FROM ghcr.io/actions/actions-runner:X.Y.Z` line in `Dockerfile`
-3. Push to `main`
+1. Fetches the latest version from [actions/runner releases](https://github.com/actions/runner/releases)
+2. Checks if that version already exists in GHCR
+3. If new version found, builds multi-arch image and pushes to GHCR
+4. If version already exists, skips (completes in ~10s)
 
-Or trigger the workflow manually with the desired version.
+### Image tags
+
+Each build produces three tags:
+
+| Tag | Example | Description |
+|-----|---------|-------------|
+| `v{version}` | `v2.332.0` | Runner version |
+| `v{version}-{date}` | `v2.332.0-20260314` | Version + build date |
+| `latest` | `latest` | Most recent build |
+
+### Triggers
+
+| Trigger | Behavior |
+|---------|----------|
+| **Schedule** (every 6h) | Auto-detects latest version, builds only if new |
+| **Push to main** | Always builds with latest version |
+| **Manual dispatch** | Optionally override with a specific version |
+
+### Deploying to a private registry
+
+After a new image is built in GHCR, copy it to a private registry using [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md):
+
+```bash
+crane copy --platform all \
+  ghcr.io/rpsadarangani/github-runners:v2.332.0 \
+  <your-registry>/github-runners:v2.332.0
+```
+
+### Updating ARC runner sets via Helm
+
+```bash
+helm get values <release-name> -n <namespace> > values.yaml
+# Update the runner image tag in values.yaml, then:
+helm upgrade <release-name> \
+  oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+  -n <namespace> -f values.yaml
+```
