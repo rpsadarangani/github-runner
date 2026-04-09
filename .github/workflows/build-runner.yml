@@ -14,10 +14,11 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/github-runners
+  ECR_REPO: github-runners
 
 jobs:
   resolve:
-    runs-on: ubuntu-latest
+    runs-on: rs-ne-non-prod-arm64
     outputs:
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.check.outputs.build }}
@@ -28,7 +29,7 @@ jobs:
           if [ -n "${{ github.event.inputs.runner_version }}" ]; then
             VERSION="${{ github.event.inputs.runner_version }}"
           else
-            VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+            VERSION=$(curl -sk https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name' | sed 's/^v//')
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Runner version: ${VERSION}"
@@ -48,16 +49,32 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  upload-context:
     needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: rs-ne-non-prod-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload Dockerfile as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-context
+          path: Dockerfile
+
+  build:
+    needs: [resolve, upload-context]
     if: needs.resolve.outputs.build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download Dockerfile artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-context
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -82,7 +99,7 @@ jobs:
             type=raw,value=v${{ needs.resolve.outputs.version }}-{{date 'YYYYMMDD'}}
             type=raw,value=latest
 
-      - name: Build and push
+      - name: Build and push to GHCR
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -94,3 +111,46 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  push-ecr:
+    needs: [resolve, build]
+    if: needs.resolve.outputs.build == 'true'
+    strategy:
+      matrix:
+        include:
+          - env: non-prod
+            ecr: 288761739962.dkr.ecr.ap-south-1.amazonaws.com
+            runner: rs-ne-non-prod-dso-amd64
+          - env: prod
+            ecr: 122610482619.dkr.ecr.ap-south-1.amazonaws.com
+            runner: rs-ne-prod-dso-amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ap-south-1 | \
+            docker login --username AWS --password-stdin ${{ matrix.ecr }}
+
+      - name: Install crane
+        run: |
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then ARCH="x86_64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
+          curl -fksSL "https://github.com/google/go-containerregistry/releases/download/v0.20.3/go-containerregistry_Linux_${ARCH}.tar.gz" | sudo tar xz -C /usr/local/bin crane
+          chmod +x /usr/local/bin/crane
+
+      - name: Copy image to ECR
+        run: |
+          VERSION="v${{ needs.resolve.outputs.version }}"
+
+          # Login crane to GHCR
+          echo ${{ secrets.GITHUB_TOKEN }} | crane auth login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          # Login crane to ECR
+          aws ecr get-login-password --region ap-south-1 | crane auth login ${{ matrix.ecr }} -u AWS --password-stdin
+
+          # Copy multi-arch image
+          crane copy --platform all \
+            ghcr.io/${{ env.IMAGE_NAME }}:${VERSION} \
+            ${{ matrix.ecr }}/${{ env.ECR_REPO }}:${VERSION}
+
+          echo "Pushed ${VERSION} to ${{ matrix.env }} ECR (${{ matrix.ecr }})"
