@@ -48,6 +48,7 @@ RUN apt-get update -y \
     libicu-dev \
     curl \
     unzip \
+    zstd \
     zip \
     git \
     jq \
