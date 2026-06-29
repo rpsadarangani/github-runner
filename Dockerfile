@@ -49,6 +49,7 @@ RUN apt-get update -y \
     curl \
     unzip \
     zip \
+    zstd \
     git \
     jq \
     awscli \
