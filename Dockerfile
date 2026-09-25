@@ -71,6 +71,14 @@ RUN curl -fkLO "https://dl.k8s.io/release/$(curl -fkLs https://dl.k8s.io/release
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
     && rm kubectl
 
+# Install gh CLI (n-1 of latest release)
+RUN GH_VERSION=$(curl -fsSL "https://api.github.com/repos/cli/cli/releases?per_page=2" \
+      | jq -r '.[1].tag_name' | sed 's/^v//') \
+    && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" \
+      | tar xz -C /tmp \
+    && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh" /usr/local/bin/gh \
+    && rm -rf "/tmp/gh_${GH_VERSION}_linux_${TARGETARCH}"
+
 # Install Devspace
 RUN curl -fkLo devspace "https://github.com/loft-sh/devspace/releases/latest/download/devspace-linux-${TARGETARCH}" \
     && install -c -m 0755 devspace /usr/local/bin \
