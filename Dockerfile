@@ -16,7 +16,7 @@ RUN export RUNNER_ARCH=${TARGETARCH} \
     && curl -fkLo runner.tar.gz https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-${TARGETOS}-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz \
     && tar xzf ./runner.tar.gz \
     && rm runner.tar.gz \
-    && rm -rf ./externals/node20
+    && rm -rf ./externals/node20 ./externals/node20_alpine
 
 RUN curl -fkLo runner-container-hooks.zip https://github.com/actions/runner-container-hooks/releases/download/v${RUNNER_CONTAINER_HOOKS_VERSION}/actions-runner-hooks-k8s-${RUNNER_CONTAINER_HOOKS_VERSION}.zip \
     && unzip ./runner-container-hooks.zip -d ./k8s \
@@ -41,7 +41,7 @@ ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 ENV RUNNER_MANUALLY_TRAP_SIG=1
 ENV ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1
-# Node 20 is EOL (CVE-2026-111497); externals/node20 is removed above, so run all JS actions on node24
+# Node 20 is EOL (CVE-2026-111497); externals/node20 and node20_alpine are removed above, so run all JS actions on node24
 ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 
 RUN apt-get update -y \
